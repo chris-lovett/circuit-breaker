@@ -246,9 +246,9 @@ blueGreen:
   # -- Traffic weight for each backend version.  The two values must sum to 100.
   trafficSplit:
     # -- Percentage of traffic routed to the v1 (blue) backend.
-    v1: 90
+    v1: 100
     # -- Percentage of traffic routed to the v2 (green) backend.
-    v2: 10
+    v2: 0
 
   # -- Per-version backend Deployment configuration.
   backendVersions:
