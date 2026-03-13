@@ -7,7 +7,7 @@ cluster), and demonstrates two complementary resiliency/deployment patterns:
 1. **Circuit-breaker** – via Consul's `ServiceDefaults` CRD (passive outlier
    detection + active connection-pool limits).
 2. **Blue/green traffic splitting** – via Consul's `ServiceResolver` +
-   `ServiceSplitter` CRDs (configurable 90/10 default split, same namespace).
+   `ServiceSplitter` CRDs (configurable 100/0 default split, same namespace).
 
 ---
 
@@ -49,8 +49,8 @@ Consul CRDs
 │                                                                  │
 │  ┌──────────────────┐   mTLS    ┌─────────────────────────────┐  │
 │  │  frontend Pod    │──────────▶│ Consul ServiceSplitter      │  │
-│  │  (envoy sidecar) │           │   backend: 90 % → v1        │  │
-│  └──────────────────┘           │           10 % → v2         │  │
+│  │  (envoy sidecar) │           │   backend: 100 % → v1       │  │
+│  └──────────────────┘           │           0 % → v2          │  │
 │                                 └──────────┬──────────┬────────┘  │
 │                                            │          │           │
 │                          ┌─────────────────▼──┐  ┌───▼──────────┐ │
@@ -67,7 +67,7 @@ A ServiceSplitter routes traffic between the subsets.
 
 Consul CRDs (in addition to the circuit-breaker CRDs above)
   • ServiceResolver (backend)    – defines v1 / v2 subsets
-  • ServiceSplitter (backend)    – 90 / 10 traffic split (configurable)
+  • ServiceSplitter (backend)    – 100 / 0 traffic split (configurable)
 ```
 
 ---
@@ -108,10 +108,10 @@ oc get route circuit-breaker-frontend -n consul-demo \
   -o jsonpath='{.spec.host}{"\n"}'
 ```
 
-### Blue/green mode (90/10 backend split)
+### Blue/green mode (100/0 backend split)
 
 ```bash
-# Install with blue/green splitting enabled (default 90 % v1 / 10 % v2)
+# Install with blue/green splitting enabled (default 100 % v1 / 0 % v2)
 helm install circuit-breaker ./helm/circuit-breaker \
   --namespace consul-demo \
   --set blueGreen.enabled=true \
@@ -201,8 +201,8 @@ The most important knobs are listed below.
 | Parameter | Description | Default |
 |---|---|---|
 | `blueGreen.enabled` | Enable blue/green mode (replaces the single backend Deployment) | `false` |
-| `blueGreen.trafficSplit.v1` | % of traffic routed to backend-v1 | `90` |
-| `blueGreen.trafficSplit.v2` | % of traffic routed to backend-v2 | `10` |
+| `blueGreen.trafficSplit.v1` | % of traffic routed to backend-v1 | `100` |
+| `blueGreen.trafficSplit.v2` | % of traffic routed to backend-v2 | `0` |
 | `blueGreen.backendVersions.v1.replicaCount` | Replica count for v1 | `2` |
 | `blueGreen.backendVersions.v1.name` | fake-service `NAME` for v1 | `backend-v1` |
 | `blueGreen.backendVersions.v1.image.repository` | Image repo for v1 | `nicholasjackson/fake-service` |
