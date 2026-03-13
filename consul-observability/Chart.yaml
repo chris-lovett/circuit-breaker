@@ -1,0 +1,32 @@
+apiVersion: v2
+name: consul-observability
+description: >
+  Umbrella Helm chart that deploys a monitoring + logging observability stack
+  for Consul Service Mesh on OpenShift.
+  Includes Prometheus Operator (kube-prometheus-stack), Grafana, Loki, and Promtail,
+  plus pre-built PodMonitors, PrometheusRules, and an optional OpenShift Route.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - consul
+  - service-mesh
+  - observability
+  - monitoring
+  - openshift
+  - prometheus
+  - grafana
+  - loki
+maintainers:
+  - name: chris-lovett
+
+dependencies:
+  - name: kube-prometheus-stack
+    version: "62.6.0"
+    repository: "https://prometheus-community.github.io/helm-charts"
+  - name: loki
+    version: "6.6.0"
+    repository: "https://grafana.github.io/helm-charts"
+  - name: promtail
+    version: "6.16.6"
+    repository: "https://grafana.github.io/helm-charts"

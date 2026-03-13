@@ -1,0 +1,43 @@
+{{- if .Values.consul.agents.enabled }}
+##
+## PodMonitor: consul-agents
+##
+## Scrapes Consul agent (client and server) metrics from the agent HTTP API.
+## Endpoint: http://<pod-ip>:<port>/v1/agent/metrics?format=prometheus
+##
+## Selector targets pods in Values.consul.namespace matching
+## Values.consul.agents.selectorLabels.  Tune these to match your Consul
+## Helm install if the default labels differ.
+##
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "consul-observability.fullname" . }}-consul-agents
+  labels:
+    {{- include "consul-observability.labels" . | nindent 4 }}
+    {{- include "consul-observability.prometheusLabels" . | nindent 4 }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.consul.namespace | quote }}
+  selector:
+    matchLabels:
+      {{- toYaml .Values.consul.agents.selectorLabels | nindent 6 }}
+  podMetricsEndpoints:
+    - port: {{ .Values.consul.agents.portName | default "http" | quote }}
+      path: {{ .Values.consul.agents.metricsPath | default "/v1/agent/metrics" | quote }}
+      params:
+        format:
+          - prometheus
+      interval: {{ .Values.consul.agents.scrapeInterval | default "30s" | quote }}
+      scrapeTimeout: {{ .Values.consul.agents.scrapeTimeout | default "10s" | quote }}
+      honorLabels: true
+      relabelings:
+        ## Attach the pod name and node name for easier filtering in dashboards.
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+{{- end }}

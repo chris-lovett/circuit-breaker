@@ -1,0 +1,49 @@
+{{- if .Values.consul.meshEnvoy.enabled }}
+##
+## PodMonitor: consul-mesh-envoy
+##
+## Scrapes Envoy sidecar metrics from pods that have been injected by the
+## Consul Connect sidecar-injector.
+##
+## Endpoint: http://<pod-ip>:<port>/stats/prometheus
+##
+## Default selectors target pods in Values.consul.namespace that carry:
+##   app=consul
+##   consul.hashicorp.com/connect-inject-status=injected
+##
+## Consul's injector adds a containerPort named "envoy-admin" at 19000 by default.
+## If your environment uses a different port name, update consul.meshEnvoy.portName.
+##
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "consul-observability.fullname" . }}-consul-mesh-envoy
+  labels:
+    {{- include "consul-observability.labels" . | nindent 4 }}
+    {{- include "consul-observability.prometheusLabels" . | nindent 4 }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.consul.namespace | quote }}
+  selector:
+    matchLabels:
+      {{- toYaml .Values.consul.meshEnvoy.selectorLabels | nindent 6 }}
+  podMetricsEndpoints:
+    - port: {{ .Values.consul.meshEnvoy.portName | default "envoy-admin" | quote }}
+      path: {{ .Values.consul.meshEnvoy.metricsPath | default "/stats/prometheus" | quote }}
+      interval: {{ .Values.consul.meshEnvoy.scrapeInterval | default "30s" | quote }}
+      scrapeTimeout: {{ .Values.consul.meshEnvoy.scrapeTimeout | default "10s" | quote }}
+      honorLabels: true
+      relabelings:
+        ## Attach useful pod-level labels for Grafana filtering.
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        ## Preserve the Consul service name from the pod annotation if present.
+        - sourceLabels: [__meta_kubernetes_pod_annotation_consul_hashicorp_com_service_name]
+          targetLabel: consul_service
+          regex: (.+)
+{{- end }}

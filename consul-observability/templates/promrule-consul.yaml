@@ -1,0 +1,79 @@
+##
+## PrometheusRule: consul-rules
+##
+## Starter alert rules for a Consul Service Mesh deployment.
+## All alerts are labeled "release: kps" so they are picked up by the Prometheus
+## instance deployed by kube-prometheus-stack.
+##
+## Add or tune thresholds in values.yaml (not shown here; extend as needed).
+##
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "consul-observability.fullname" . }}-consul-rules
+  labels:
+    {{- include "consul-observability.labels" . | nindent 4 }}
+    {{- include "consul-observability.prometheusLabels" . | nindent 4 }}
+spec:
+  groups:
+    ## -------------------------------------------------------------------------
+    ## Consul Raft / Leader health
+    ## -------------------------------------------------------------------------
+    - name: consul.raft
+      rules:
+        - alert: ConsulRaftLeaderMissing
+          expr: |
+            sum(consul_raft_leader) < 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Consul has no Raft leader"
+            description: >
+              No Consul Raft leader has been detected for more than 2 minutes.
+              The Consul cluster may be unavailable.  Check the consul-server pods
+              in namespace {{ .Values.consul.namespace }}.
+            runbook_url: "https://developer.hashicorp.com/consul/docs/architecture/consensus"
+
+        - alert: ConsulRaftPeerCount
+          expr: |
+            consul_raft_peers < 3
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Consul Raft peer count is below 3"
+            description: >
+              Consul reports fewer than 3 Raft peers for more than 5 minutes.
+              This reduces fault tolerance.  Expected count depends on your
+              consul-server replicas.
+
+    ## -------------------------------------------------------------------------
+    ## Consul health-check query failures
+    ## -------------------------------------------------------------------------
+    - name: consul.health
+      rules:
+        - alert: ConsulHealthQueryFailures
+          expr: |
+            sum(rate(consul_health_service_query_failures_total[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Consul health service query failures detected"
+            description: >
+              Consul has been reporting health query failures over the past 5 minutes.
+              Services may be unreachable or the Consul agent is under load.
+              Inspect consul agent logs in namespace {{ .Values.consul.namespace }}.
+
+        - alert: ConsulMemberFlapping
+          expr: |
+            changes(consul_memberlist_msg_alive[10m]) > 10
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Consul member is flapping"
+            description: >
+              A Consul cluster member has changed its alive status more than 10 times
+              in the last 10 minutes, suggesting network instability or a crashing pod.

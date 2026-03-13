@@ -1,0 +1,33 @@
+{{- if and .Values.global.openshift .Values.openshift.grafanaRoute.enabled }}
+##
+## OpenShift Route – exposes the Grafana service outside the cluster.
+##
+## The target Service name is derived from the kube-prometheus-stack sub-chart.
+## When kube-prometheus-stack has no fullnameOverride the Service is named
+## "<release>-grafana".  If you set kube-prometheus-stack.fullnameOverride
+## or kube-prometheus-stack.grafana.fullnameOverride, adjust "to.name" below.
+##
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "consul-observability.fullname" . }}-grafana
+  labels:
+    {{- include "consul-observability.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+spec:
+  {{- if .Values.openshift.grafanaRoute.host }}
+  host: {{ .Values.openshift.grafanaRoute.host | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ .Release.Name }}-grafana
+    weight: 100
+  port:
+    targetPort: http
+  {{- if .Values.openshift.grafanaRoute.tls.enabled }}
+  tls:
+    termination: {{ .Values.openshift.grafanaRoute.tls.termination | default "edge" }}
+    insecureEdgeTerminationPolicy: Redirect
+  {{- end }}
+  wildcardPolicy: None
+{{- end }}

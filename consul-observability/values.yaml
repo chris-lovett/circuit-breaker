@@ -1,0 +1,326 @@
+## -----------------------------------------------------------------------------
+## Global flags
+## -----------------------------------------------------------------------------
+global:
+  # Set to true to enable OpenShift-specific resources (Route, SCC-safe contexts).
+  openshift: true
+
+## -----------------------------------------------------------------------------
+## kube-prometheus-stack sub-chart
+## https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
+## -----------------------------------------------------------------------------
+kube-prometheus-stack:
+  ## Grafana
+  grafana:
+    enabled: true
+    image:
+      # Pinned as required
+      tag: "12.3"
+    adminPassword: "changeme"   # override via --set or a sealed secret
+    service:
+      portName: http
+
+    grafana.ini:
+      server:
+        root_url: "%(protocol)s://%(domain)s/"
+      auth.anonymous:
+        enabled: true
+        org_role: Viewer
+
+    sidecar:
+      datasources:
+        enabled: true
+
+    # Pre-configure Loki as an additional data source.
+    # The loki sub-chart gateway is exposed as "loki-gateway" when
+    # loki.fullnameOverride is set to "loki" (see below).
+    additionalDataSources:
+      - name: Loki
+        type: loki
+        url: http://loki-gateway
+        access: proxy
+        isDefault: false
+        jsonData:
+          maxLines: 1000
+
+    # OpenShift restricted-SCC-compatible security context.
+    # Do NOT set runAsUser or fsGroup; OpenShift assigns them from the namespace range.
+    podSecurityContext:
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: false   # Grafana writes to /tmp; keep false
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+
+  ## Prometheus
+  prometheus:
+    enabled: true
+    prometheusSpec:
+      # Prometheus will ONLY pick up resources that carry release: kps.
+      # If you want it to also pick up kube-prometheus-stack's own monitors
+      # set matchExpressions to allow the default "prometheus: kps" label as well.
+      serviceMonitorSelector:
+        matchLabels:
+          release: kps
+      serviceMonitorNamespaceSelector: {}   # all namespaces
+
+      podMonitorSelector:
+        matchLabels:
+          release: kps
+      podMonitorNamespaceSelector: {}       # all namespaces
+
+      ruleSelector:
+        matchLabels:
+          release: kps
+      ruleNamespaceSelector: {}             # all namespaces
+
+      retention: 15d
+      resources:
+        requests:
+          cpu: 200m
+          memory: 1Gi
+        limits:
+          memory: 4Gi
+
+      # OpenShift restricted-SCC-compatible pod security context.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: prometheus
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+      storageSpec: {}   # override with a PVC claim if needed, e.g.:
+      # storageSpec:
+      #   volumeClaimTemplate:
+      #     spec:
+      #       storageClassName: gp3-csi
+      #       resources:
+      #         requests:
+      #           storage: 50Gi
+
+  ## Alertmanager
+  alertmanager:
+    enabled: true
+    alertmanagerSpec:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 512Mi
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: alertmanager
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+  ## Optional cluster component scrapers
+  kubeStateMetrics:
+    enabled: true
+  nodeExporter:
+    enabled: true
+  kubeControllerManager:
+    enabled: false   # often unavailable on managed/OpenShift clusters
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+
+  ## The kube-prometheus-stack chart also creates ServiceMonitors for its own
+  ## components with a "release: <releaseName>" label.  If you keep
+  ## serviceMonitorSelector above to only match "release: kps", those monitors
+  ## will NOT be picked up unless you also add "release: kps" to them via the
+  ## releaseLabel value below.
+  commonLabels:
+    release: kps
+
+## -----------------------------------------------------------------------------
+## Loki sub-chart  (single-binary, filesystem storage – good for dev/staging)
+## https://github.com/grafana/helm-charts/tree/main/charts/loki
+## -----------------------------------------------------------------------------
+loki:
+  enabled: true
+
+  # Makes the gateway Service name predictable: "loki-gateway".
+  fullnameOverride: loki
+
+  loki:
+    image:
+      # Pinned as required
+      tag: "3.6.4"
+    auth_enabled: false
+
+    commonConfig:
+      replication_factor: 1
+
+    storage:
+      type: filesystem
+
+    schemaConfig:
+      configs:
+        - from: "2024-01-01"
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: loki_index_
+            period: 24h
+
+  deploymentMode: SingleBinary
+
+  singleBinary:
+    replicas: 1
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: ""   # set to your OpenShift StorageClass, e.g. "gp3-csi"
+
+    # OpenShift restricted-SCC-compatible security context.
+    podSecurityContext:
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: false   # Loki writes WAL + chunks
+
+  gateway:
+    enabled: true
+    # OpenShift security context for the nginx gateway container.
+    podSecurityContext:
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: false   # nginx needs /tmp and /var/cache
+
+  # Disable components not used in SingleBinary mode.
+  backend:
+    replicas: 0
+  read:
+    replicas: 0
+  write:
+    replicas: 0
+
+## -----------------------------------------------------------------------------
+## Promtail sub-chart  (DaemonSet log shipper)
+## https://github.com/grafana/helm-charts/tree/main/charts/promtail
+## -----------------------------------------------------------------------------
+promtail:
+  enabled: true
+
+  image:
+    # Pinned as required
+    tag: "3.6"
+
+  config:
+    clients:
+      - url: http://loki-gateway/loki/api/v1/push
+
+  # OpenShift restricted-SCC-compatible security context.
+  # NOTE: reading container log files from /var/log/pods may require a
+  # custom SCC or privileged access depending on the cluster security policy.
+  # Start with restricted and relax only if pods cannot read log files.
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+## -----------------------------------------------------------------------------
+## Consul-specific scraping configuration (used by this chart's templates)
+## -----------------------------------------------------------------------------
+consul:
+  # Kubernetes namespace where Consul is installed.
+  namespace: consul
+
+  ## PodMonitor: consul-agents
+  ## Scrapes Consul server and client agent metrics directly from the agent API.
+  agents:
+    enabled: true
+    # matchLabels must select the consul agent/server pods.
+    selectorLabels:
+      app: consul
+      component: agent
+    # Port NAME as declared in the pod spec (Consul Helm default: "http").
+    portName: http
+    # Override if agents expose metrics on a non-standard path.
+    metricsPath: /v1/agent/metrics
+    scrapeInterval: 30s
+    scrapeTimeout: 10s
+
+  ## PodMonitor: consul-mesh-envoy
+  ## Scrapes Envoy admin/stats from pods injected with the Consul Connect sidecar.
+  meshEnvoy:
+    enabled: true
+    # The two labels below identify connect-injected pods.
+    selectorLabels:
+      app: consul
+      consul.hashicorp.com/connect-inject-status: injected
+    # Port NAME as declared in the injected pod spec.
+    # Consul injects a port named "envoy-admin" at 19000 by default.
+    portName: envoy-admin
+    metricsPath: /stats/prometheus
+    scrapeInterval: 30s
+    scrapeTimeout: 10s
+
+  ## ServiceMonitor: consul-services (optional, disabled by default)
+  ## Enable when Consul is exposed via a headless/normal Service with a named
+  ## "metrics" port.
+  serviceMonitor:
+    enabled: false
+    selectorLabels:
+      app: consul
+    portName: metrics
+    metricsPath: /metrics
+    scrapeInterval: 30s
+
+## -----------------------------------------------------------------------------
+## OpenShift-specific resources
+## -----------------------------------------------------------------------------
+openshift:
+  grafanaRoute:
+    # Set to true to create an OpenShift Route for the Grafana service.
+    enabled: true
+    # Leave empty to let OpenShift auto-generate the hostname.
+    host: ""
+    tls:
+      enabled: true
+      termination: edge
