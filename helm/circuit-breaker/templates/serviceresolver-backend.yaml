@@ -1,0 +1,25 @@
+{{- if .Values.blueGreen.enabled }}
+# ──────────────────────────────────────────────────────────────────────────────
+# ServiceResolver – backend (blue/green mode only)
+#
+# Defines two subsets of the "backend" Consul service by filtering on the
+# "version" service metadata key that is set via the
+# consul.hashicorp.com/service-meta-version annotation on each Pod.
+#
+# The ServiceSplitter references these subset names to distribute traffic
+# between the two backend versions.
+# ──────────────────────────────────────────────────────────────────────────────
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceResolver
+metadata:
+  name: backend
+  namespace: {{ include "circuit-breaker.namespace" . }}
+  labels:
+    {{- include "circuit-breaker.labels" . | nindent 4 }}
+spec:
+  subsets:
+    v1:
+      filter: 'Service.Meta.version == "v1"'
+    v2:
+      filter: 'Service.Meta.version == "v2"'
+{{- end }}

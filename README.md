@@ -1,17 +1,23 @@
 # circuit-breaker
 
 A Helm chart that deploys an example two-tier application onto an **existing
-Consul service mesh** running on **OpenShift**, and implements the
-**circuit-breaker resiliency pattern** via Consul's L7 traffic-management
-Custom Resource Definitions (CRDs).
+Consul service mesh** running on **OpenShift** (or any Kubernetes 1.8+
+cluster), and demonstrates two complementary resiliency/deployment patterns:
+
+1. **Circuit-breaker** – via Consul's `ServiceDefaults` CRD (passive outlier
+   detection + active connection-pool limits).
+2. **Blue/green traffic splitting** – via Consul's `ServiceResolver` +
+   `ServiceSplitter` CRDs (configurable 100/0 default split, same namespace).
 
 ---
 
 ## Architecture
 
+### Default mode (`blueGreen.enabled=false`)
+
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  OpenShift Namespace                                     │
+│  Kubernetes Namespace                                    │
 │                                                          │
 │  ┌─────────────────────┐       ┌──────────────────────┐  │
 │  │  frontend Pod       │ mTLS  │  backend Pod (×2)    │  │
@@ -35,10 +41,34 @@ Consul CRDs
   • ServiceIntentions            – allow frontend → backend
 ```
 
-The **frontend** service receives incoming HTTP requests and fans them out to
-the **backend** via its Envoy sidecar proxy.  The circuit-breaker is
-configured on the *backend* `ServiceDefaults` resource and is enforced by
-the Envoy proxy running inside each frontend Pod.
+### Blue/green mode (`blueGreen.enabled=true`)
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Kubernetes Namespace                                            │
+│                                                                  │
+│  ┌──────────────────┐   mTLS    ┌─────────────────────────────┐  │
+│  │  frontend Pod    │──────────▶│ Consul ServiceSplitter      │  │
+│  │  (envoy sidecar) │           │   backend: 100 % → v1       │  │
+│  └──────────────────┘           │           0 % → v2          │  │
+│                                 └──────────┬──────────┬────────┘  │
+│                                            │          │           │
+│                          ┌─────────────────▼──┐  ┌───▼──────────┐ │
+│                          │ backend-v1 Pod (×2) │  │ backend-v2   │ │
+│                          │  (subset: v1)       │  │ Pod (×1)     │ │
+│                          │                     │  │ (subset: v2) │ │
+│                          └─────────────────────┘  └─────────────┘ │
+└──────────────────────────────────────────────────────────────────┘
+
+Both backend Deployments register under the same "backend" Consul service
+name.  A ServiceResolver defines subsets (v1/v2) filtered by the
+consul.hashicorp.com/service-meta-version Pod annotation.
+A ServiceSplitter routes traffic between the subsets.
+
+Consul CRDs (in addition to the circuit-breaker CRDs above)
+  • ServiceResolver (backend)    – defines v1 / v2 subsets
+  • ServiceSplitter (backend)    – 100 / 0 traffic split (configurable)
+```
 
 ---
 
@@ -46,11 +76,12 @@ the Envoy proxy running inside each frontend Pod.
 
 | Requirement | Version |
 |---|---|
-| OpenShift | 4.10 + |
+| Kubernetes | 1.8 + (or OpenShift 4.10 +) |
 | Consul on Kubernetes (`consul-k8s`) | 1.0 + |
 | Helm | 3.10 + |
 | Consul connect-inject enabled | — |
 | Consul CRDs installed | `ServiceDefaults`, `ServiceIntentions`, `ProxyDefaults` |
+| Consul CRDs for blue/green | `ServiceResolver`, `ServiceSplitter` (same chart) |
 
 > **Tip:** The [HashiCorp Consul Helm chart](https://github.com/hashicorp/consul-k8s)
 > installs all required CRDs.  Follow the
@@ -61,18 +92,47 @@ the Envoy proxy running inside each frontend Pod.
 
 ## Quick Start
 
+### Default mode (circuit-breaker only)
+
 ```bash
-# 1. Create (or switch to) the target OpenShift project
-oc new-project consul-demo
+# 1. Create (or switch to) the target namespace / OpenShift project
+kubectl create namespace consul-demo   # or: oc new-project consul-demo
 
 # 2. Install the circuit-breaker chart
 helm install circuit-breaker ./helm/circuit-breaker \
   --namespace consul-demo \
   --wait
 
-# 3. Get the frontend URL
+# 3. Get the frontend URL (OpenShift)
 oc get route circuit-breaker-frontend -n consul-demo \
   -o jsonpath='{.spec.host}{"\n"}'
+```
+
+### Blue/green mode (100/0 backend split)
+
+```bash
+# Install with blue/green splitting enabled (default 100 % v1 / 0 % v2)
+helm install circuit-breaker ./helm/circuit-breaker \
+  --namespace consul-demo \
+  --set blueGreen.enabled=true \
+  --wait
+
+# Verify Consul CRDs are synced
+kubectl get serviceresolvers,servicesplitters -n consul-demo
+
+# Gradually shift traffic to v2 (e.g. 50/50)
+helm upgrade circuit-breaker ./helm/circuit-breaker \
+  --namespace consul-demo \
+  --reuse-values \
+  --set blueGreen.trafficSplit.v1=50 \
+  --set blueGreen.trafficSplit.v2=50
+
+# Complete cut-over to v2
+helm upgrade circuit-breaker ./helm/circuit-breaker \
+  --namespace consul-demo \
+  --reuse-values \
+  --set blueGreen.trafficSplit.v1=0 \
+  --set blueGreen.trafficSplit.v2=100
 ```
 
 ---
@@ -136,6 +196,31 @@ The most important knobs are listed below.
 | `circuitBreaker.upstreamLimits.maxConcurrentRequests` | Max in-flight requests | `1024` |
 | `circuitBreaker.createIntentions` | Create ServiceIntentions (ACL deny default) | `true` |
 
+### Blue/green backend splitting
+
+| Parameter | Description | Default |
+|---|---|---|
+| `blueGreen.enabled` | Enable blue/green mode (replaces the single backend Deployment) | `false` |
+| `blueGreen.trafficSplit.v1` | % of traffic routed to backend-v1 | `100` |
+| `blueGreen.trafficSplit.v2` | % of traffic routed to backend-v2 | `0` |
+| `blueGreen.backendVersions.v1.replicaCount` | Replica count for v1 | `2` |
+| `blueGreen.backendVersions.v1.name` | fake-service `NAME` for v1 | `backend-v1` |
+| `blueGreen.backendVersions.v1.image.repository` | Image repo for v1 | `nicholasjackson/fake-service` |
+| `blueGreen.backendVersions.v1.image.tag` | Image tag for v1 | `v0.26.0` |
+| `blueGreen.backendVersions.v1.extraEnv` | Extra env vars appended to v1 container | `[]` |
+| `blueGreen.backendVersions.v2.replicaCount` | Replica count for v2 | `1` |
+| `blueGreen.backendVersions.v2.name` | fake-service `NAME` for v2 | `backend-v2` |
+| `blueGreen.backendVersions.v2.image.repository` | Image repo for v2 | `nicholasjackson/fake-service` |
+| `blueGreen.backendVersions.v2.image.tag` | Image tag for v2 | `v0.26.0` |
+| `blueGreen.backendVersions.v2.extraEnv` | Extra env vars appended to v2 container | `[]` |
+
+> **Note:** `blueGreen.trafficSplit.v1` + `blueGreen.trafficSplit.v2` must sum
+> to **100**.  Consul's `ServiceSplitter` enforces this at reconciliation time.
+
+> **Note:** The `ServiceSplitter` and `ServiceResolver` require the backend
+> service protocol to be set to `http`, which is configured automatically when
+> `circuitBreaker.enabled=true` (the default).
+
 ### OpenShift
 
 | Parameter | Description | Default |
@@ -186,6 +271,38 @@ oc set env deployment/circuit-breaker-backend ERROR_RATE=0 -n consul-demo
 
 ---
 
+## Verifying Blue/Green Traffic Splitting
+
+```bash
+# 1. Confirm both backend Pods are running and have Envoy sidecar injected
+kubectl get pods -n consul-demo -l app.kubernetes.io/component=backend
+
+# 2. Check that the Consul CRDs are synced
+kubectl get serviceresolvers,servicesplitters -n consul-demo
+
+# 3. Watch traffic distribution in the frontend Envoy admin interface
+FRONTEND_POD=$(kubectl get pod -n consul-demo -l app.kubernetes.io/component=frontend \
+  -o jsonpath='{.items[0].metadata.name}')
+
+kubectl exec "$FRONTEND_POD" -c envoy-sidecar -n consul-demo -- \
+  curl -s http://localhost:19000/clusters | grep -E "backend.*cx_active|backend.*rq_total"
+
+# 4. Inject errors only on v2 to verify isolation
+helm upgrade circuit-breaker ./helm/circuit-breaker \
+  --namespace consul-demo \
+  --reuse-values \
+  --set 'blueGreen.backendVersions.v2.extraEnv[0].name=ERROR_RATE' \
+  --set 'blueGreen.backendVersions.v2.extraEnv[0].value=1.0'
+
+# 5. Restore normal operation on v2
+helm upgrade circuit-breaker ./helm/circuit-breaker \
+  --namespace consul-demo \
+  --reuse-values \
+  --set blueGreen.backendVersions.v2.extraEnv='{}'
+```
+
+---
+
 ## Chart Structure
 
 ```
@@ -197,7 +314,9 @@ helm/circuit-breaker/
     ├── NOTES.txt                      # Post-install notes
     ├── serviceaccount.yaml            # ServiceAccount
     ├── rolebinding-scc.yaml           # OpenShift anyuid SCC binding
-    ├── deployment-backend.yaml        # Backend Deployment
+    ├── deployment-backend.yaml        # Backend Deployment (blueGreen.enabled=false)
+    ├── deployment-backend-v1.yaml     # Backend v1 Deployment (blueGreen.enabled=true)
+    ├── deployment-backend-v2.yaml     # Backend v2 Deployment (blueGreen.enabled=true)
     ├── service-backend.yaml           # Backend Service
     ├── deployment-frontend.yaml       # Frontend Deployment
     ├── service-frontend.yaml          # Frontend Service
@@ -205,7 +324,9 @@ helm/circuit-breaker/
     ├── proxydefaults.yaml             # Consul ProxyDefaults CRD
     ├── servicedefaults-backend.yaml   # Consul ServiceDefaults (circuit breaker)
     ├── servicedefaults-frontend.yaml  # Consul ServiceDefaults (frontend)
-    └── serviceintentions.yaml         # Consul ServiceIntentions
+    ├── serviceintentions.yaml         # Consul ServiceIntentions
+    ├── serviceresolver-backend.yaml   # Consul ServiceResolver (blueGreen.enabled=true)
+    └── servicesplitter-backend.yaml   # Consul ServiceSplitter (blueGreen.enabled=true)
 ```
 
 ---
@@ -214,6 +335,8 @@ helm/circuit-breaker/
 
 * [Consul Circuit Breaking (PassiveHealthCheck)](https://developer.hashicorp.com/consul/docs/connect/config-entries/service-defaults#passivehealthcheck)
 * [Consul Upstreams Connection Limits](https://developer.hashicorp.com/consul/docs/connect/config-entries/service-defaults#limits)
+* [Consul ServiceResolver (subsets)](https://developer.hashicorp.com/consul/docs/connect/config-entries/service-resolver)
+* [Consul ServiceSplitter (traffic splitting)](https://developer.hashicorp.com/consul/docs/connect/config-entries/service-splitter)
 * [Consul on OpenShift](https://developer.hashicorp.com/consul/docs/k8s/openshift)
 * [Envoy Outlier Detection](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/outlier)
 * [fake-service](https://github.com/nicholasjackson/fake-service) – demo container used for both services

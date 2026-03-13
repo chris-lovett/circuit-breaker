@@ -51,10 +51,34 @@ VERIFYING THE CIRCUIT BREAKER
        ERROR_RATE=0 \
        -n {{ include "circuit-breaker.namespace" . }}
 
+{{- if .Values.blueGreen.enabled }}
+BLUE/GREEN BACKEND SPLIT
+─────────────────────────
+Blue/green traffic splitting is ENABLED.  Consul is routing backend traffic
+with a {{ .Values.blueGreen.trafficSplit.v1 }}/{{ .Values.blueGreen.trafficSplit.v2 }} split:
+
+  v1 ({{ .Values.blueGreen.backendVersions.v1.name }}) → {{ .Values.blueGreen.trafficSplit.v1 }}%  ({{ .Values.blueGreen.backendVersions.v1.replicaCount }} replica(s))
+  v2 ({{ .Values.blueGreen.backendVersions.v2.name }}) → {{ .Values.blueGreen.trafficSplit.v2 }}%  ({{ .Values.blueGreen.backendVersions.v2.replicaCount }} replica(s))
+
+Verify the split with:
+
+  kubectl get serviceresolvers,servicesplitters -n {{ include "circuit-breaker.namespace" . }}
+
+To shift all traffic to v2 (full cut-over):
+
+  helm upgrade {{ .Release.Name }} ./helm/circuit-breaker \
+    --reuse-values \
+    --set blueGreen.trafficSplit.v1=0 \
+    --set blueGreen.trafficSplit.v2=100
+
+{{- end }}
 DOCUMENTATION
 ─────────────
 Consul circuit-breaker reference:
   https://developer.hashicorp.com/consul/docs/connect/config-entries/service-defaults#passivehealthcheck
+
+Consul traffic splitting reference:
+  https://developer.hashicorp.com/consul/docs/connect/config-entries/service-splitter
 
 OpenShift Consul integration guide:
   https://developer.hashicorp.com/consul/docs/k8s/openshift

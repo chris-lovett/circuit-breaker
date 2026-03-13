@@ -227,3 +227,63 @@ circuitBreaker:
   # -- Create a ServiceIntentions resource that explicitly allows the frontend
   #    to call the backend.  Required when Consul ACL default policy is "deny".
   createIntentions: true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Blue/Green backend traffic splitting
+# ──────────────────────────────────────────────────────────────────────────────
+# When enabled, the single backend Deployment is replaced by two versioned
+# Deployments (v1 and v2).  Consul's ServiceResolver creates subsets for each
+# version and a ServiceSplitter routes traffic between them according to the
+# configured weights.  Both Deployments register under the same "backend"
+# Consul service name so no changes to the frontend configuration are required.
+blueGreen:
+  # -- Enable blue/green backend traffic splitting.
+  # When false (default), a single backend Deployment is used.
+  # When true, two versioned Deployments are deployed and Consul CRDs are
+  # created to split traffic between them.
+  enabled: false
+
+  # -- Traffic weight for each backend version.  The two values must sum to 100.
+  trafficSplit:
+    # -- Percentage of traffic routed to the v1 (blue) backend.
+    v1: 100
+    # -- Percentage of traffic routed to the v2 (green) backend.
+    v2: 0
+
+  # -- Per-version backend Deployment configuration.
+  backendVersions:
+    v1:
+      # -- Number of Pod replicas for the v1 backend.
+      replicaCount: 2
+      # -- Human-readable name returned in the fake-service JSON response body.
+      # Maps to the fake-service NAME environment variable.
+      name: "backend-v1"
+      image:
+        # -- Container image repository for the v1 backend.
+        repository: nicholasjackson/fake-service
+        # -- Image tag for the v1 backend.
+        tag: "v0.26.0"
+        # -- Image pull policy for the v1 backend.
+        pullPolicy: IfNotPresent
+      # -- Additional environment variables appended to the standard backend
+      # env vars (LISTEN_ADDR, NAME, TIMING_50_PERCENTILE, ERROR_RATE, etc.).
+      # Use this to override defaults or inject version-specific configuration.
+      extraEnv: []
+
+    v2:
+      # -- Number of Pod replicas for the v2 backend.
+      replicaCount: 1
+      # -- Human-readable name returned in the fake-service JSON response body.
+      # Maps to the fake-service NAME environment variable.
+      name: "backend-v2"
+      image:
+        # -- Container image repository for the v2 backend.
+        repository: nicholasjackson/fake-service
+        # -- Image tag for the v2 backend.
+        tag: "v0.26.0"
+        # -- Image pull policy for the v2 backend.
+        pullPolicy: IfNotPresent
+      # -- Additional environment variables appended to the standard backend
+      # env vars (LISTEN_ADDR, NAME, TIMING_50_PERCENTILE, ERROR_RATE, etc.).
+      # Use this to override defaults or inject version-specific configuration.
+      extraEnv: []
