@@ -1,0 +1,38 @@
+{{- if .Values.circuitBreaker.enabled }}
+# ──────────────────────────────────────────────────────────────────────────────
+# ServiceDefaults – backend
+#
+# Consul translates the PassiveHealthCheck block into Envoy outlier-detection
+# settings on every upstream cluster that points at the backend service.
+# This is the *passive* circuit-breaker: Envoy observes real traffic and
+# ejects hosts that exceed the consecutive-5xx threshold.
+#
+# The UpstreamConfig.Defaults block sets connection-pool limits on the
+# *frontend → backend* connection.  Once those limits are reached, Envoy
+# returns 503 immediately rather than queueing new requests – this is the
+# *active* (fast-fail) half of the circuit-breaker pattern.
+# ──────────────────────────────────────────────────────────────────────────────
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceDefaults
+metadata:
+  name: backend
+  namespace: {{ include "circuit-breaker.namespace" . }}
+  labels:
+    {{- include "circuit-breaker.labels" . | nindent 4 }}
+spec:
+  protocol: http
+  # Passive health checking – eject unhealthy backend Pods from the load-
+  # balancing pool so the circuit is "open" for that host.
+  upstreamConfig:
+    defaults:
+      passiveHealthCheck:
+        interval: {{ .Values.circuitBreaker.passiveHealthCheck.interval | quote }}
+        maxEjectionPercent: {{ .Values.circuitBreaker.passiveHealthCheck.maxEjectionPercent }}
+        enforcingConsecutive5xx: {{ .Values.circuitBreaker.passiveHealthCheck.enforcingConsecutive5xx }}
+        consecutive5xxErrors: {{ .Values.circuitBreaker.passiveHealthCheck.consecutive5xx }}
+        baseEjectionTime: {{ .Values.circuitBreaker.passiveHealthCheck.baseEjectionTime | quote }}
+      limits:
+        maxConnections: {{ .Values.circuitBreaker.upstreamLimits.maxConnections }}
+        maxPendingRequests: {{ .Values.circuitBreaker.upstreamLimits.maxPendingRequests }}
+        maxConcurrentRequests: {{ .Values.circuitBreaker.upstreamLimits.maxConcurrentRequests }}
+{{- end }}

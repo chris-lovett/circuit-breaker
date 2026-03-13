@@ -1,0 +1,17 @@
+apiVersion: v2
+name: circuit-breaker
+description: >
+  A Helm chart that deploys an example two-tier application onto an existing
+  Consul service mesh running on OpenShift, demonstrating the circuit-breaker
+  resiliency pattern via Consul's L7 traffic management CRDs.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - consul
+  - service-mesh
+  - circuit-breaker
+  - openshift
+  - resiliency
+maintainers:
+  - name: circuit-breaker maintainers

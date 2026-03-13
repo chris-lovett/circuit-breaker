@@ -1,0 +1,229 @@
+# Default values for the circuit-breaker example application.
+# The application consists of a "frontend" service that calls a "backend"
+# service over the Consul service mesh.  Envoy sidecar proxies are injected
+# by the Consul connect-injector and the circuit-breaker pattern is
+# implemented via Consul's L7 traffic-management Custom Resource Definitions.
+
+# -- Override the chart name used in resource labels/names.
+nameOverride: ""
+# -- Override the fully-qualified chart name used in resource labels/names.
+fullnameOverride: ""
+
+# -- Kubernetes namespace to deploy into.
+# Leave empty to use the release namespace.
+namespace: ""
+
+# -- Common labels applied to every resource created by this chart.
+commonLabels: {}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Consul integration
+# ──────────────────────────────────────────────────────────────────────────────
+consul:
+  # -- Datacenter name configured in the running Consul cluster.
+  datacenter: dc1
+  # -- Namespace inside Consul (Consul Enterprise only; leave empty for OSS).
+  namespace: ""
+  # -- Extra annotations merged onto every Pod so that the Consul
+  #    connect-injector can be controlled on a per-workload basis.
+  podAnnotations: {}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Service account
+# ──────────────────────────────────────────────────────────────────────────────
+serviceAccount:
+  # -- Create a dedicated ServiceAccount for this release.
+  create: true
+  # -- Annotations added to the ServiceAccount (e.g. for IRSA / Workload Identity).
+  annotations: {}
+  # -- Override the ServiceAccount name.  Defaults to the full chart name.
+  name: ""
+
+# ──────────────────────────────────────────────────────────────────────────────
+# OpenShift Security Context Constraints
+# ──────────────────────────────────────────────────────────────────────────────
+openshift:
+  # -- When true, create a RoleBinding that grants the release ServiceAccount
+  #    the "anyuid" SCC so that the demo containers can run with their default
+  #    (non-root) UIDs without hitting OpenShift UID-range restrictions.
+  createSCCRoleBinding: true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Backend service  (the upstream that the frontend calls)
+# ──────────────────────────────────────────────────────────────────────────────
+backend:
+  # -- Number of backend Pod replicas.
+  replicaCount: 2
+
+  image:
+    # -- Container image repository for the backend.
+    # nicholasjackson/fake-service is the standard HashiCorp demo service used
+    # for Consul service mesh examples.
+    repository: nicholasjackson/fake-service
+    # -- Image pull policy.
+    pullPolicy: IfNotPresent
+    # -- Image tag.
+    tag: "v0.26.0"
+
+  # -- Extra environment variables injected into the backend container.
+  env:
+    # The fake-service listens on this port by default.
+    - name: LISTEN_ADDR
+      value: "0.0.0.0:9090"
+    # Human-readable name returned in the JSON response body.
+    - name: NAME
+      value: "backend"
+    # Simulated processing latency (0 = disabled).
+    - name: TIMING_50_PERCENTILE
+      value: "100ms"
+    # Percentage of requests that return an HTTP 500 (used to trigger the
+    # circuit-breaker in demos).
+    - name: ERROR_RATE
+      value: "0"
+    - name: ERROR_TYPE
+      value: "http_error"
+    - name: ERROR_CODE
+      value: "500"
+
+  service:
+    # -- Kubernetes Service type for the backend.
+    type: ClusterIP
+    # -- Port exposed by the Kubernetes Service.
+    port: 9090
+    # -- Target port on the Pod.
+    targetPort: 9090
+
+  # -- Resource requests and limits for the backend container.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # -- Pod-level security context for the backend.
+  podSecurityContext:
+    runAsNonRoot: true
+
+  # -- Container-level security context for the backend.
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+  # -- Node selector for the backend Pods.
+  nodeSelector: {}
+  # -- Tolerations for the backend Pods.
+  tolerations: []
+  # -- Affinity rules for the backend Pods.
+  affinity: {}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Frontend service  (calls the backend; circuit-breaker sits here)
+# ──────────────────────────────────────────────────────────────────────────────
+frontend:
+  # -- Number of frontend Pod replicas.
+  replicaCount: 1
+
+  image:
+    repository: nicholasjackson/fake-service
+    pullPolicy: IfNotPresent
+    tag: "v0.26.0"
+
+  # -- Extra environment variables injected into the frontend container.
+  env:
+    - name: LISTEN_ADDR
+      value: "0.0.0.0:9090"
+    - name: NAME
+      value: "frontend"
+    # Comma-separated list of upstream URLs the fake-service will call.
+    # The hostname matches the Consul service name; traffic is intercepted by
+    # the Envoy sidecar proxy.
+    - name: UPSTREAM_URIS
+      value: "http://localhost:9091"
+    - name: HTTP_CLIENT_KEEP_ALIVES
+      value: "false"
+
+  service:
+    type: ClusterIP
+    port: 9090
+    targetPort: 9090
+
+  # -- Expose the frontend via an OpenShift Route.
+  route:
+    # -- Create an OpenShift Route for external access.
+    enabled: true
+    # -- Route hostname.  Leave empty to let OpenShift auto-generate.
+    host: ""
+    # -- TLS termination type: "edge", "reencrypt", "passthrough", or "" (none).
+    tlsTermination: "edge"
+    # -- Redirect HTTP to HTTPS when using TLS.
+    insecureEdgeTerminationPolicy: "Redirect"
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  podSecurityContext:
+    runAsNonRoot: true
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Circuit-breaker configuration
+# ──────────────────────────────────────────────────────────────────────────────
+# These values are used to populate Consul's ServiceDefaults CRD on the
+# backend service.  Consul translates them into Envoy outlier-detection
+# (passive circuit breaker) parameters on the upstream cluster.
+circuitBreaker:
+  # -- Create Consul L7 traffic-management CRDs (ServiceDefaults,
+  #    ServiceIntentions, ProxyDefaults).  Set to false if you want to manage
+  #    the CRDs separately.
+  enabled: true
+
+  # Passive health-checking (outlier detection) parameters on the
+  # *frontend → backend* upstream connection pool.
+  passiveHealthCheck:
+    # -- Sliding time window over which Envoy tracks ejection statistics.
+    interval: "10s"
+    # -- Maximum percentage of backend hosts that may be ejected at any time.
+    maxEjectionPercent: 100
+    # -- Minimum number of requests in a measurement period before Envoy
+    #    starts ejecting hosts (avoids premature ejections with low traffic).
+    enforcingConsecutive5xx: 100
+    # -- Consecutive 5xx responses required to eject a host.
+    consecutive5xx: 5
+    # -- Base ejection time.  The actual ejection duration grows with the
+    #    number of times a host has been ejected.
+    baseEjectionTime: "30s"
+
+  # Active connection-pool limits applied to the upstream cluster.
+  # These implement the "trip" side of the circuit breaker: once the pool
+  # is full, new requests fail-fast rather than queueing indefinitely.
+  upstreamLimits:
+    # -- Maximum number of concurrent connections to backend instances.
+    maxConnections: 1024
+    # -- Maximum number of pending requests while waiting for a connection.
+    maxPendingRequests: 512
+    # -- Maximum number of in-flight requests to all backend instances.
+    maxConcurrentRequests: 1024
+
+  # -- Create a ServiceIntentions resource that explicitly allows the frontend
+  #    to call the backend.  Required when Consul ACL default policy is "deny".
+  createIntentions: true

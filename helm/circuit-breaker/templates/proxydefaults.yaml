@@ -1,0 +1,23 @@
+{{- if .Values.circuitBreaker.enabled }}
+# ProxyDefaults – global
+#
+# Sets a cluster-wide default so that Consul/Envoy applies L7 traffic
+# management to all services in the mesh.  The most important setting here is
+# the protocol default; individual services can override it via their own
+# ServiceDefaults resource (as we do above).
+#
+# NOTE: Only one ProxyDefaults resource named "global" may exist per Consul
+# datacenter.  If your Consul installation already ships one, set
+# circuitBreaker.enabled=false and merge these settings manually, or manage
+# this resource outside Helm.
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ProxyDefaults
+metadata:
+  name: global
+  namespace: {{ include "circuit-breaker.namespace" . }}
+  labels:
+    {{- include "circuit-breaker.labels" . | nindent 4 }}
+spec:
+  config:
+    protocol: http
+{{- end }}

@@ -1,0 +1,60 @@
+Thank you for installing the {{ .Chart.Name }} chart ({{ .Chart.Version }}).
+
+APPLICATION ENDPOINTS
+─────────────────────
+{{- if .Values.frontend.route.enabled }}
+The frontend is exposed via an OpenShift Route.  Retrieve the URL with:
+
+  oc get route {{ include "circuit-breaker.fullname" . }}-frontend \
+    -n {{ include "circuit-breaker.namespace" . }} \
+    -o jsonpath='{.spec.host}'
+
+Then open https://<route-host> in your browser.
+{{- else }}
+The frontend Service is only accessible inside the cluster.  Forward a local
+port to test it:
+
+  kubectl port-forward svc/frontend 8080:{{ .Values.frontend.service.port }} \
+    -n {{ include "circuit-breaker.namespace" . }}
+
+Then open http://localhost:8080 in your browser.
+{{- end }}
+
+VERIFYING THE CIRCUIT BREAKER
+──────────────────────────────
+1. Confirm that both Pods are running and that Consul has injected the Envoy
+   sidecars:
+
+     oc get pods -n {{ include "circuit-breaker.namespace" . }}
+     # Each Pod should have 2/2 (or 3/3 if init-containers are counted)
+     # containers in the READY column.
+
+2. Check the Consul service mesh CRD statuses:
+
+     oc get servicedefaults,serviceintentions,proxydefaults \
+       -n {{ include "circuit-breaker.namespace" . }}
+     # All resources should show synced=True.
+
+3. Trigger errors on the backend to trip the circuit breaker.  Set the
+   ERROR_RATE env-var to "1.0" (100 % errors) and watch Envoy eject the host:
+
+     oc set env deployment/{{ include "circuit-breaker.fullname" . }}-backend \
+       ERROR_RATE=1.0 \
+       -n {{ include "circuit-breaker.namespace" . }}
+
+4. After {{ .Values.circuitBreaker.passiveHealthCheck.consecutive5xx }} consecutive
+   5xx responses the host is ejected for
+   {{ .Values.circuitBreaker.passiveHealthCheck.baseEjectionTime }}.  Restore
+   normal behaviour with:
+
+     oc set env deployment/{{ include "circuit-breaker.fullname" . }}-backend \
+       ERROR_RATE=0 \
+       -n {{ include "circuit-breaker.namespace" . }}
+
+DOCUMENTATION
+─────────────
+Consul circuit-breaker reference:
+  https://developer.hashicorp.com/consul/docs/connect/config-entries/service-defaults#passivehealthcheck
+
+OpenShift Consul integration guide:
+  https://developer.hashicorp.com/consul/docs/k8s/openshift
