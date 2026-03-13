@@ -1,29 +1,41 @@
-{{- if not .Values.blueGreen.enabled }}
+{{- if .Values.blueGreen.enabled }}
+# ──────────────────────────────────────────────────────────────────────────────
+# Backend v1 Deployment  (blue/green mode only)
+#
+# Registers pods under the "backend" Consul service with metadata
+# version=v1 so that the ServiceResolver can expose them as the "v1" subset.
+# ──────────────────────────────────────────────────────────────────────────────
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "circuit-breaker.fullname" . }}-backend
+  name: {{ include "circuit-breaker.fullname" . }}-backend-v1
   namespace: {{ include "circuit-breaker.namespace" . }}
   labels:
     {{- include "circuit-breaker.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
+    version: v1
 spec:
-  replicas: {{ .Values.backend.replicaCount }}
+  replicas: {{ .Values.blueGreen.backendVersions.v1.replicaCount }}
   selector:
     matchLabels:
       {{- include "circuit-breaker.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: backend
+      version: v1
   template:
     metadata:
       labels:
         {{- include "circuit-breaker.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: backend
+        version: v1
       annotations:
         {{- include "circuit-breaker.consulAnnotations" . | nindent 8 }}
-        # Tell Consul which service name to register.
+        # Register under the shared "backend" Consul service name so that the
+        # ServiceSplitter can route traffic between subsets without any change
+        # to the frontend upstream declaration.
         consul.hashicorp.com/connect-service: backend
-        # The port advertised to the service mesh.
         consul.hashicorp.com/connect-service-port: {{ .Values.backend.service.targetPort | quote }}
+        # Service metadata used by the ServiceResolver to build the "v1" subset.
+        consul.hashicorp.com/service-meta-version: v1
     spec:
       serviceAccountName: {{ include "circuit-breaker.serviceAccountName" . }}
       {{- with .Values.backend.podSecurityContext }}
@@ -32,8 +44,8 @@ spec:
       {{- end }}
       containers:
         - name: backend
-          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
-          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          image: "{{ .Values.blueGreen.backendVersions.v1.image.repository }}:{{ .Values.blueGreen.backendVersions.v1.image.tag }}"
+          imagePullPolicy: {{ .Values.blueGreen.backendVersions.v1.image.pullPolicy }}
           {{- with .Values.backend.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
@@ -43,7 +55,21 @@ spec:
               containerPort: {{ .Values.backend.service.targetPort }}
               protocol: TCP
           env:
-            {{- toYaml .Values.backend.env | nindent 12 }}
+            - name: LISTEN_ADDR
+              value: "0.0.0.0:{{ .Values.backend.service.targetPort }}"
+            - name: NAME
+              value: {{ .Values.blueGreen.backendVersions.v1.name | quote }}
+            - name: TIMING_50_PERCENTILE
+              value: "100ms"
+            - name: ERROR_RATE
+              value: "0"
+            - name: ERROR_TYPE
+              value: "http_error"
+            - name: ERROR_CODE
+              value: "500"
+            {{- with .Values.blueGreen.backendVersions.v1.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
