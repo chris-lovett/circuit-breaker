@@ -1,0 +1,28 @@
+{{- if and .Values.serviceAccount.create .Values.openshift.createSCCRoleBinding }}
+# Grant the release ServiceAccount the OpenShift "anyuid" SCC so that the
+# demo containers can run with their declared UIDs without being constrained
+# by the project's UID range.
+#
+# The "anyuid" SCC is built into every OpenShift cluster and is the minimal
+# privilege needed for containers that specify a non-zero runAsUser or that do
+# not set runAsUser (letting the image default apply).
+#
+# NOTE: A ClusterRole that refers to the "anyuid" SCC already ships with
+# OpenShift (system:openshift:scc:anyuid).  We bind it at the namespace level
+# so the privilege is scoped to this project only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "circuit-breaker.fullname" . }}-anyuid
+  namespace: {{ include "circuit-breaker.namespace" . }}
+  labels:
+    {{- include "circuit-breaker.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "circuit-breaker.serviceAccountName" . }}
+    namespace: {{ include "circuit-breaker.namespace" . }}
+{{- end }}

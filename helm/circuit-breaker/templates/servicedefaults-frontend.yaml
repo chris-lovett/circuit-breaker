@@ -1,0 +1,15 @@
+{{- if .Values.circuitBreaker.enabled }}
+# ServiceDefaults – frontend
+#
+# Sets the protocol so that Consul can apply L7 traffic-management rules
+# (e.g. retries, circuit-breaker, etc.) on outgoing calls from the frontend.
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceDefaults
+metadata:
+  name: frontend
+  namespace: {{ include "circuit-breaker.namespace" . }}
+  labels:
+    {{- include "circuit-breaker.labels" . | nindent 4 }}
+spec:
+  protocol: http
+{{- end }}

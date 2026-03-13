@@ -1,0 +1,27 @@
+{{- if .Values.frontend.route.enabled }}
+# OpenShift Route – exposes the frontend service outside the cluster.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "circuit-breaker.fullname" . }}-frontend
+  namespace: {{ include "circuit-breaker.namespace" . }}
+  labels:
+    {{- include "circuit-breaker.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  {{- with .Values.frontend.route.host }}
+  host: {{ . }}
+  {{- end }}
+  to:
+    kind: Service
+    name: frontend
+    weight: 100
+  port:
+    targetPort: http
+  {{- if .Values.frontend.route.tlsTermination }}
+  tls:
+    termination: {{ .Values.frontend.route.tlsTermination }}
+    insecureEdgeTerminationPolicy: {{ .Values.frontend.route.insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+{{- end }}

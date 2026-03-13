@@ -1,0 +1,28 @@
+{{- if and .Values.circuitBreaker.enabled .Values.circuitBreaker.createIntentions }}
+# ServiceIntentions – frontend → backend
+#
+# Explicitly authorises the frontend service to call the backend service.
+# Required when the Consul ACL default policy is "deny" (the recommended
+# production posture).  Without this intention, all inter-service traffic is
+# blocked at the mTLS layer even though the circuit-breaker itself is
+# already configured.
+apiVersion: consul.hashicorp.com/v1alpha1
+kind: ServiceIntentions
+metadata:
+  name: backend
+  namespace: {{ include "circuit-breaker.namespace" . }}
+  labels:
+    {{- include "circuit-breaker.labels" . | nindent 4 }}
+spec:
+  destination:
+    name: backend
+    {{- with .Values.consul.namespace }}
+    namespace: {{ . | quote }}
+    {{- end }}
+  sources:
+    - name: frontend
+      {{- with .Values.consul.namespace }}
+      namespace: {{ . | quote }}
+      {{- end }}
+      action: allow
+{{- end }}
