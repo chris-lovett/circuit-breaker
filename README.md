@@ -28,10 +28,10 @@ cluster), and demonstrates two complementary resiliency/deployment patterns:
 │  │  │ envoy sidecar │  │       │  │  envoy sidecar │  │  │
 │  │  └───────────────┘  │       │  └────────────────┘  │  │
 │  └─────────────────────┘       └──────────────────────┘  │
-│           │                                               │
-│  ┌────────▼────────┐                                      │
-│  │ OpenShift Route │  ──▶  external traffic               │
-│  └─────────────────┘                                      │
+│           │                                              │
+│  ┌────────▼────────┐                                     │
+│  │ OpenShift Route │  ──▶  external traffic              │
+│  └─────────────────┘                                     │
 └──────────────────────────────────────────────────────────┘
 
 Consul CRDs
